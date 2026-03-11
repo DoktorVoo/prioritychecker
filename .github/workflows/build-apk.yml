@@ -1,0 +1,61 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1 — Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2 — Set up JDK 17 (required for AGP 8.x)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      # 3 — Set up Gradle (downloads Gradle 8.9, caches it)
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # 4 — Generate Gradle wrapper (creates gradlew + wrapper jar)
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version=8.9 --distribution-type=bin
+
+      # 5 — Make gradlew executable
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # 6 — Build debug APK
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # 7 — Upload APK as workflow artifact
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PriorityChecker-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      # 8 — Print APK size info
+      - name: APK Info
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          SIZE=$(du -sh "$APK" | cut -f1)
+          echo "✅ APK built successfully – Size: $SIZE"
+          echo "📦 Path: $APK"
