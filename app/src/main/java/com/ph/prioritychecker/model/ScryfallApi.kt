@@ -63,6 +63,28 @@ object ScryfallApi {
     private const val BASE = "https://api.scryfall.com"
 
     /**
+     * Autocomplete card names via Scryfall /cards/autocomplete endpoint.
+     * Returns up to 20 name suggestions (de + en merged).
+     */
+    suspend fun autocomplete(query: String): List<String> = withContext(Dispatchers.IO) {
+        if (query.length < 2) return@withContext emptyList()
+        try {
+            val enc = URLEncoder.encode(query.trim(), "UTF-8")
+            val url = "$BASE/cards/autocomplete?q=$enc"
+            val json = httpGet(url) ?: return@withContext emptyList()
+            val root = JSONObject(json)
+            val data = root.optJSONArray("data") ?: return@withContext emptyList()
+            val result = mutableListOf<String>()
+            for (i in 0 until minOf(data.length(), 20)) {
+                result.add(data.getString(i))
+            }
+            result
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
      * Search both German and English in parallel, merge and deduplicate by oracle id.
      * Returns up to 20 results.
      */

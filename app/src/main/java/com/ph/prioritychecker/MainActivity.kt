@@ -35,7 +35,6 @@ import coil.request.ImageRequest
 import com.ph.prioritychecker.model.*
 import com.ph.prioritychecker.viewmodel.GameViewModel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 // ─── Colors ──────────────────────────────────────────────────────────────────
 
@@ -668,32 +667,44 @@ fun SpecialRulesCard(step: StepDefinition) {
     }
 }
 
-// ─── Add to Stack Dialog with Scryfall Search ─────────────────────────────────
+// ─── Add to Stack Dialog with Scryfall Autocomplete + Search ──────────────────
 
 @Composable
 fun AddToStackDialog(state: GameState, vm: GameViewModel, onDismiss: () -> Unit) {
     val str = LocalStr.current
-    val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     val isGerman = state.language == Language.GERMAN
 
     var query by remember { mutableStateOf("") }
+    var autocompleteSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showDropdown by remember { mutableStateOf(false) }
     var searchResults by remember { mutableStateOf<List<ScryfallCard>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
     var searchMsg by remember { mutableStateOf("") }
     var selectedCard by remember { mutableStateOf<ScryfallCard?>(null) }
-    var description by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf(str.typeInstant) }
     var previewCard by remember { mutableStateOf<ScryfallCard?>(null) }
+    // Tracks whether the current query was set by picking from dropdown (skip autocomplete refetch)
+    var skipAutocomplete by remember { mutableStateOf(false) }
 
     val types = listOf(str.typeInstant, str.typeSorcery, str.typeCreature, str.typeArtifact,
         str.typeEnchantment, str.typePlaneswalker, str.typeBattle,
         str.typeActivatedAbility, str.typeTriggeredAbility, str.typeOther)
 
-    // Debounced search
+    // Autocomplete: fast, short debounce, only for dropdown suggestions
     LaunchedEffect(query) {
-        if (query.length < 2) { searchResults = emptyList(); searchMsg = ""; return@LaunchedEffect }
-        delay(400)
+        if (skipAutocomplete) { skipAutocomplete = false; return@LaunchedEffect }
+        if (query.length < 2) { autocompleteSuggestions = emptyList(); showDropdown = false; return@LaunchedEffect }
+        delay(220)
+        val suggestions = ScryfallApi.autocomplete(query)
+        autocompleteSuggestions = suggestions
+        showDropdown = suggestions.isNotEmpty()
+    }
+
+    // Full card search: longer debounce, populates the card result list below
+    LaunchedEffect(query) {
+        if (query.length < 2) { searchResults = emptyList(); searchMsg = ""; isSearching = false; return@LaunchedEffect }
+        delay(500)
         isSearching = true
         searchMsg = str.searching
         selectedCard = null
@@ -716,26 +727,83 @@ fun AddToStackDialog(state: GameState, vm: GameViewModel, onDismiss: () -> Unit)
                 Text(str.searchCard, color = Gold, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
 
-                // Search field
-                OutlinedTextField(value = query, onValueChange = { query = it; selectedCard = null },
-                    label = { Text(str.searchCard, color = TextMuted) },
-                    placeholder = { Text(str.searchPlaceholder, color = TextMuted) },
-                    modifier = Modifier.fillMaxWidth(),
-                    trailingIcon = {
-                        if (isSearching) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = NeonGreen)
-                        else if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, null, tint = TextMuted) }
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = NeonGreen, unfocusedBorderColor = Color(0xFF3A5A3A),
-                        focusedTextColor = TextPrimary, unfocusedTextColor = TextSecondary))
+                // ── Search field + Autocomplete Dropdown ──────────────────────
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    Column {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it; selectedCard = null; showDropdown = true },
+                            label = { Text(str.searchCard, color = TextMuted) },
+                            placeholder = { Text(str.searchPlaceholder, color = TextMuted) },
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                if (isSearching) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = NeonGreen)
+                                else if (query.isNotEmpty()) IconButton(onClick = {
+                                    query = ""; selectedCard = null
+                                    autocompleteSuggestions = emptyList(); showDropdown = false
+                                    searchResults = emptyList(); searchMsg = ""
+                                }) { Icon(Icons.Default.Close, null, tint = TextMuted) }
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = NeonGreen, unfocusedBorderColor = Color(0xFF3A5A3A),
+                                focusedTextColor = TextPrimary, unfocusedTextColor = TextSecondary),
+                            singleLine = true
+                        )
 
-                // Search results
+                        // Autocomplete dropdown: max 4 rows visible, then scrollable
+                        if (showDropdown && autocompleteSuggestions.isNotEmpty() && selectedCard == null) {
+                            Surface(
+                                color = CardDark,
+                                shape = RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp),
+                                border = BorderStroke(1.dp, NeonGreen.copy(alpha = 0.35f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                LazyColumn(
+                                    modifier = Modifier.heightIn(max = (4 * 46).dp) // max 4 rows visible
+                                ) {
+                                    itemsIndexed(autocompleteSuggestions) { idx, suggestion ->
+                                        val isLast = idx == autocompleteSuggestions.lastIndex
+                                        Column {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        skipAutocomplete = true
+                                                        query = suggestion
+                                                        showDropdown = false
+                                                        autocompleteSuggestions = emptyList()
+                                                        selectedCard = null
+                                                    }
+                                                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Text("🔍", fontSize = 12.sp)
+                                                Text(
+                                                    suggestion,
+                                                    color = TextPrimary,
+                                                    fontSize = 13.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            if (!isLast) Divider(color = Color(0xFF2A3A2A), thickness = 0.5.dp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Status message
                 if (searchMsg.isNotEmpty() && !isSearching) {
                     Spacer(Modifier.height(6.dp))
                     Text(searchMsg, color = if (searchResults.isEmpty()) TextMuted else TextSecondary, fontSize = 11.sp)
                 }
 
-                if (searchResults.isNotEmpty()) {
+                // Full search results list
+                if (searchResults.isNotEmpty() && !showDropdown) {
                     Spacer(Modifier.height(6.dp))
                     LazyColumn(modifier = Modifier.heightIn(max = 240.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         items(searchResults) { card ->
@@ -745,8 +813,8 @@ fun AddToStackDialog(state: GameState, vm: GameViewModel, onDismiss: () -> Unit)
                                 border = BorderStroke(1.dp, if (isSelected) NeonGreen.copy(alpha = 0.6f) else Color(0xFF2A3A2A)),
                                 modifier = Modifier.clickable {
                                     selectedCard = card
-                                    description = card.displayName
                                     selectedType = card.detectType(isGerman)
+                                    showDropdown = false
                                 }.pointerInput(card.scryfallId) {
                                     detectTapGestures(onLongPress = { previewCard = card })
                                 }) {
@@ -779,21 +847,16 @@ fun AddToStackDialog(state: GameState, vm: GameViewModel, onDismiss: () -> Unit)
                     }
                 }
 
-                // Manual / selected card section
+                // Selected card info / type picker
                 Spacer(Modifier.height(12.dp))
                 Divider(color = Color(0xFF2A3A2A))
                 Spacer(Modifier.height(8.dp))
-                Text(if (selectedCard != null) "✅ ${selectedCard!!.displayName}" else str.manualEntrySection,
-                    color = if (selectedCard != null) NeonGreen else TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
 
-                if (selectedCard == null) {
-                    OutlinedTextField(value = description, onValueChange = { description = it },
-                        label = { Text(str.effectDescription, color = TextMuted) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = NeonGreen, unfocusedBorderColor = Color(0xFF3A5A3A),
-                            focusedTextColor = TextPrimary, unfocusedTextColor = TextSecondary))
+                if (selectedCard != null) {
+                    Text("✅ ${selectedCard!!.displayName}", color = NeonGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                } else {
+                    Text(str.manualEntrySection, color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
                 }
 
@@ -816,10 +879,12 @@ fun AddToStackDialog(state: GameState, vm: GameViewModel, onDismiss: () -> Unit)
                         Text(str.cancel, color = TextSecondary)
                     }
                     Button(onClick = {
-                        vm.addToStack(description, selectedType, selectedCard)
+                        // Use selectedCard name, or fall back to the typed query as description
+                        val desc = selectedCard?.displayName ?: query.trim()
+                        vm.addToStack(desc, selectedType, selectedCard)
                         onDismiss()
                     }, modifier = Modifier.weight(1f),
-                        enabled = selectedCard != null || description.isNotBlank(),
+                        enabled = selectedCard != null,
                         colors = ButtonDefaults.buttonColors(containerColor = NeonGreen.copy(alpha = 0.8f))) {
                         Text(str.addButton, color = Color.Black, fontWeight = FontWeight.Bold)
                     }
