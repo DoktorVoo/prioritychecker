@@ -749,35 +749,46 @@ fun ActionButtons(state: GameState, vm: GameViewModel, onAddToStack: () -> Unit)
                 // Pass Priority
                 Button(
                     onClick = { vm.passPriority() },
-                    modifier = Modifier.weight(1f).height(52.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (state.lastPassedBy != null) AlertRed.copy(alpha = 0.8f) else NeonGreen.copy(alpha = 0.8f)
+                        containerColor = if (state.lastPassedBy != null) AlertRed.copy(alpha = 0.85f) else NeonGreen.copy(alpha = 0.85f)
                     ),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(if (state.lastPassedBy != null) "⏭️" else "→", fontSize = 14.sp)
-                        Text(
-                            if (state.lastPassedBy != null && state.stack.isEmpty()) "Schritt beenden"
-                            else if (state.lastPassedBy != null) "Stack auflösen"
-                            else "Priorität abgeben",
-                            color = Color.Black,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
+                    Text(
+                        if (state.lastPassedBy != null && state.stack.isEmpty()) "⏭ Schritt enden"
+                        else if (state.lastPassedBy != null) "⏭ Auflösen"
+                        else "→ Prio abgeben",
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 // Add to Stack
                 Button(
                     onClick = onAddToStack,
-                    modifier = Modifier.weight(1f).height(52.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = StackBlueDark),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Text("📚", fontSize = 14.sp)
-                        Text("Auf Stack legen", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(
+                            "Auf Stack",
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -802,6 +813,29 @@ fun ActionButtons(state: GameState, vm: GameViewModel, onAddToStack: () -> Unit)
                             fontSize = 12.sp
                         )
                     }
+                }
+            }
+        }
+
+        // Next Step Button — always visible except when awaiting mandatory action
+        if (!state.awaitingMandatoryAction && state.currentStep.id != StepId.CLEANUP) {
+            val steps = vm.filteredSteps()
+            val currentIdx = vm.currentFilteredIndex()
+            val nextStep = steps.getOrNull(currentIdx + 1)
+            if (nextStep != null) {
+                OutlinedButton(
+                    onClick = { vm.goToStep(currentIdx + 1) },
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                    border = BorderStroke(1.dp, Color(0xFF3A6A3A)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        "▶ Weiter: ${nextStep.displayName}  [${nextStep.shortName}]",
+                        color = TextSecondary,
+                        fontSize = 13.sp,
+                        maxLines = 1
+                    )
                 }
             }
         }
