@@ -11,7 +11,7 @@ class GameViewModel : ViewModel() {
     private val _state = MutableStateFlow(buildInitialState())
     val state: StateFlow<GameState> = _state.asStateFlow()
 
-    // ─── Player Name Settings ────────────────────────────────────────────
+    private fun str() = if (_state.value.language == Language.GERMAN) germanStrings() else englishStrings()
 
     fun setPlayerNames(p1: String, p2: String) {
         _state.value = _state.value.copy(
@@ -20,12 +20,19 @@ class GameViewModel : ViewModel() {
         )
     }
 
-    // ─── Mandatory Action Confirmation ───────────────────────────────────
+    fun setLanguage(lang: Language) {
+        _state.value = _state.value.copy(language = lang)
+    }
+
+    fun toggleFirstStrike(include: Boolean) {
+        _state.value = _state.value.copy(includeFirstStrike = include)
+    }
 
     fun confirmMandatoryAction() {
         val s = _state.value
         val step = s.currentStep
         if (!s.awaitingMandatoryAction) return
+        val st = str()
 
         val newPriority = when {
             !step.hasPriority -> PriorityHolder.NONE
@@ -34,14 +41,14 @@ class GameViewModel : ViewModel() {
         }
 
         val msg = when (step.id) {
-            StepId.UNTAP -> "Enttapp abgeschlossen. Weiter zum Versorgungsschritt."
-            StepId.DRAW -> "${s.activePlayerName} hat eine Karte gezogen. ${s.activePlayerName} erhält Priorität."
-            StepId.DECLARE_ATTACKERS -> "Angreifer erklärt. ${s.activePlayerName} erhält Priorität."
-            StepId.DECLARE_BLOCKERS -> "Blocker erklärt + Schadensreihenfolge festgelegt. ${s.activePlayerName} erhält Priorität."
-            StepId.FIRST_STRIKE_DAMAGE -> "Erstangriff-Schaden zugeteilt. Zustandsbasierte Aktionen geprüft. ${s.activePlayerName} erhält Priorität."
-            StepId.COMBAT_DAMAGE -> "Kampfschaden zugeteilt. Zustandsbasierte Aktionen geprüft. ${s.activePlayerName} erhält Priorität."
-            StepId.CLEANUP -> "Handgröße angepasst, Schaden entfernt, Zugabende-Effekte beendet."
-            else -> "${s.activePlayerName} erhält Priorität."
+            StepId.UNTAP -> st.untapDone
+            StepId.DRAW -> "${st.drawDone}. ${s.activePlayerName}."
+            StepId.DECLARE_ATTACKERS -> st.attackersDeclared
+            StepId.DECLARE_BLOCKERS -> st.blockersDeclared
+            StepId.FIRST_STRIKE_DAMAGE -> st.firstStrikeDamageDone
+            StepId.COMBAT_DAMAGE -> st.combatDamageDone
+            StepId.CLEANUP -> st.cleanupDone
+            else -> "${s.activePlayerName} ${st.hasPriority.lowercase()}."
         }
 
         _state.value = s.copy(
@@ -52,58 +59,43 @@ class GameViewModel : ViewModel() {
         )
     }
 
-    // ─── Pass Priority (CR 117.4 / 117.5 / 117.6) ────────────────────────
-
     fun passPriority() {
         val s = _state.value
-        if (s.priority == PriorityHolder.NONE) return
-        if (s.awaitingMandatoryAction) return
-
+        if (s.priority == PriorityHolder.NONE || s.awaitingMandatoryAction) return
+        val st = str()
         val passer = s.priority
 
         if (s.bothPassedJustNow(passer)) {
-            // Both players passed in succession (CR 117.6)
-            if (s.stack.isEmpty()) {
-                // Empty stack → advance to next step
-                advanceToNextStep()
-            } else {
-                // Stack has items → resolve top item (CR 117.6a)
-                resolveTopOfStack()
-            }
+            if (s.stack.isEmpty()) advanceToNextStep()
+            else resolveTopOfStack()
         } else {
-            // Give priority to the other player (CR 117.4)
             val next = passer.flip()
+            val passerName = if (passer == PriorityHolder.ACTIVE_PLAYER) s.activePlayerName else s.nonActivePlayerName
+            val nextName = if (next == PriorityHolder.ACTIVE_PLAYER) s.activePlayerName else s.nonActivePlayerName
             _state.value = s.copy(
                 priority = next,
                 lastPassedBy = passer,
-                statusMessage = "${s.priorityHolderName()} gibt Priorität ab → ${
-                    if (next == PriorityHolder.ACTIVE_PLAYER) s.activePlayerName 
-                    else s.nonActivePlayerName
-                } erhält Priorität."
+                statusMessage = "$passerName ${st.passedLabel} → $nextName ${st.hasPriority.lowercase()}."
             )
         }
     }
 
-    // ─── Add Spell / Ability to Stack ─────────────────────────────────────
-
-    fun addToStack(description: String, itemType: String) {
+    fun addToStack(description: String, itemType: String, card: ScryfallCard? = null) {
         val s = _state.value
-        if (s.priority == PriorityHolder.NONE) return
-        if (s.awaitingMandatoryAction) return
-
+        if (s.priority == PriorityHolder.NONE || s.awaitingMandatoryAction) return
+        val displayName = card?.displayName ?: description.ifBlank { "Effect" }
         val newItem = StackItem(
             id = System.currentTimeMillis(),
-            description = description.ifBlank { "Unbenannter Effekt" },
+            description = displayName,
             controlledByActive = s.priority == PriorityHolder.ACTIVE_PLAYER,
-            itemType = itemType
+            itemType = itemType,
+            card = card
         )
-
-        // After casting: same player retains priority (CR 117.3d)
+        val added = if (s.language == Language.GERMAN) "auf den Stack gelegt" else "added to stack"
         _state.value = s.copy(
             stack = s.stack + newItem,
-            lastPassedBy = null, // Reset "both passed" tracking
-            // Same priority holder retains priority after playing
-            statusMessage = "«${newItem.description}» auf den Stack gelegt. ${s.priorityHolderName()} behält Priorität."
+            lastPassedBy = null,
+            statusMessage = "«$displayName» $added."
         )
     }
 
@@ -111,25 +103,18 @@ class GameViewModel : ViewModel() {
         val s = _state.value
         _state.value = s.copy(
             stack = s.stack.filter { it.id != itemId },
-            statusMessage = "Effekt manuell vom Stack entfernt."
+            statusMessage = str().removedFromStack
         )
     }
 
-    // ─── Toggle First Strike Step ─────────────────────────────────────────
-
-    fun toggleFirstStrike(include: Boolean) {
-        _state.value = _state.value.copy(includeFirstStrike = include)
-    }
-
-    // ─── Manually navigate steps (for learning/reference) ─────────────────
-
     fun goToStep(index: Int) {
-        if (index < 0 || index >= filteredSteps().size) return
-        val stepDef = filteredSteps()[index]
+        val steps = filteredSteps()
+        if (index < 0 || index >= steps.size) return
+        val stepDef = steps[index]
         val realIndex = ALL_STEPS.indexOf(stepDef)
+        val hasMandatory = stepDef.hasMandatoryAction
         val newPriority = when {
-            !stepDef.hasPriority -> PriorityHolder.NONE
-            stepDef.hasMandatoryAction -> PriorityHolder.NONE
+            hasMandatory || !stepDef.hasPriority || stepDef.isConditional -> PriorityHolder.NONE
             else -> PriorityHolder.ACTIVE_PLAYER
         }
         _state.value = _state.value.copy(
@@ -137,115 +122,81 @@ class GameViewModel : ViewModel() {
             priority = newPriority,
             lastPassedBy = null,
             stack = emptyList(),
-            awaitingMandatoryAction = stepDef.hasMandatoryAction,
-            statusMessage = "Manuell zu '${stepDef.displayName}' gesprungen."
+            awaitingMandatoryAction = hasMandatory,
+            statusMessage = "→ ${stepDef.displayName}"
         )
     }
 
-    // ─── New Turn ─────────────────────────────────────────────────────────
-
     fun nextTurn() {
         val s = _state.value
+        val st = str()
         _state.value = GameState(
             turnNumber = s.turnNumber + 1,
-            // Swap active / non-active player
             activePlayerName = s.nonActivePlayerName,
             nonActivePlayerName = s.activePlayerName,
-            currentStepIndex = 0, // Start at UNTAP
+            currentStepIndex = 0,
             priority = PriorityHolder.NONE,
-            stack = emptyList(),
-            lastPassedBy = null,
             awaitingMandatoryAction = true,
             includeFirstStrike = s.includeFirstStrike,
-            statusMessage = "Runde ${s.turnNumber + 1}: ${s.nonActivePlayerName} ist jetzt aktiver Spieler. Enttapp-Schritt."
+            language = s.language,
+            statusMessage = "${st.roundLabel} ${s.turnNumber + 1}: ${s.nonActivePlayerName} → ${st.activePlayer}."
         )
     }
 
     fun resetGame() {
-        _state.value = buildInitialState()
+        _state.value = buildInitialState(_state.value.language)
     }
-
-    // ─── Internal Helpers ─────────────────────────────────────────────────
 
     private fun resolveTopOfStack() {
         val s = _state.value
         val resolved = s.stack.last()
-        val newStack = s.stack.dropLast(1)
-
-        // After resolution: AP always gets priority first (CR 117.3c)
+        val word = if (s.language == Language.GERMAN) "aufgelöst" else "resolved"
         _state.value = s.copy(
-            stack = newStack,
+            stack = s.stack.dropLast(1),
             priority = PriorityHolder.ACTIVE_PLAYER,
             lastPassedBy = null,
-            statusMessage = "«${resolved.description}» aufgelöst. ${s.activePlayerName} erhält Priorität."
+            statusMessage = "«${resolved.description}» $word. ${s.activePlayerName} ${str().hasPriority.lowercase()}."
         )
     }
 
     private fun advanceToNextStep() {
         val s = _state.value
         val steps = filteredSteps()
-        val currentInFiltered = steps.indexOfFirst { it.id == s.currentStep.id }
-        val nextInFiltered = currentInFiltered + 1
+        val nextInFiltered = steps.indexOfFirst { it.id == s.currentStep.id } + 1
 
         if (nextInFiltered >= steps.size) {
-            // End of turn
-            _state.value = s.copy(
-                statusMessage = "Zugabende erreicht. Drücke 'Nächster Zug' um fortzufahren.",
-                priority = PriorityHolder.NONE,
-                lastPassedBy = null,
-                stack = emptyList()
-            )
+            _state.value = s.copy(statusMessage = str().turnEnd, priority = PriorityHolder.NONE, lastPassedBy = null, stack = emptyList())
             return
         }
 
         val nextStep = steps[nextInFiltered]
         val realIndex = ALL_STEPS.indexOf(nextStep)
         val hasMandatory = nextStep.hasMandatoryAction
-
         val newPriority = when {
-            hasMandatory -> PriorityHolder.NONE
-            !nextStep.hasPriority -> PriorityHolder.NONE
-            nextStep.isConditional -> PriorityHolder.NONE
+            hasMandatory || !nextStep.hasPriority || nextStep.isConditional -> PriorityHolder.NONE
             else -> PriorityHolder.ACTIVE_PLAYER
         }
-
-        val msg = buildStepTransitionMessage(s, nextStep, hasMandatory)
-
+        val msg = when {
+            hasMandatory -> "→ ${nextStep.displayName}: ${nextStep.mandatoryActionDescription}"
+            !nextStep.hasPriority || nextStep.isConditional -> "→ ${nextStep.displayName}"
+            else -> "→ ${nextStep.displayName}: ${s.activePlayerName} ${str().hasPriority.lowercase()}."
+        }
         _state.value = s.copy(
-            currentStepIndex = realIndex,
-            priority = newPriority,
-            lastPassedBy = null,
-            stack = emptyList(),
-            awaitingMandatoryAction = hasMandatory,
-            statusMessage = msg
+            currentStepIndex = realIndex, priority = newPriority,
+            lastPassedBy = null, stack = emptyList(),
+            awaitingMandatoryAction = hasMandatory, statusMessage = msg
         )
     }
 
-    private fun buildStepTransitionMessage(s: GameState, next: StepDefinition, hasMandatory: Boolean): String {
-        return when {
-            hasMandatory -> "→ ${next.displayName}: ${next.mandatoryActionDescription}"
-            next.id == StepId.CLEANUP -> "→ Aufräumschritt: Handgröße anpassen, Schaden entfernen."
-            !next.hasPriority -> "→ ${next.displayName}: Keine Priorität."
-            else -> "→ ${next.displayName}: ${s.activePlayerName} erhält Priorität."
-        }
-    }
+    fun filteredSteps() = ALL_STEPS.filter { it.id != StepId.FIRST_STRIKE_DAMAGE || _state.value.includeFirstStrike }
 
-    fun filteredSteps(): List<StepDefinition> {
-        val s = _state.value
-        return ALL_STEPS.filter { step ->
-            step.id != StepId.FIRST_STRIKE_DAMAGE || s.includeFirstStrike
-        }
-    }
+    fun currentFilteredIndex() = filteredSteps().indexOfFirst { it.id == _state.value.currentStep.id }
 
-    fun currentFilteredIndex(): Int {
-        val s = _state.value
-        return filteredSteps().indexOfFirst { it.id == s.currentStep.id }
-    }
-
-    private fun buildInitialState() = GameState(
-        currentStepIndex = 0, // UNTAP
-        priority = PriorityHolder.NONE,
-        awaitingMandatoryAction = true,
-        statusMessage = "Runde 1: Enttapp-Schritt. Aktiver Spieler enttappt seine Permanents."
+    private fun buildInitialState(lang: Language = Language.GERMAN) = GameState(
+        currentStepIndex = 0, priority = PriorityHolder.NONE,
+        awaitingMandatoryAction = true, language = lang,
+        statusMessage = if (lang == Language.GERMAN)
+            "Runde 1: Enttapp-Schritt. AS enttappt seine Permanents."
+        else "Round 1: Untap Step. AP untaps their permanents."
     )
 }

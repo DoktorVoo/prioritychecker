@@ -400,40 +400,39 @@ data class StackItem(
     val id: Long,
     val description: String,
     val controlledByActive: Boolean,
-    val itemType: String = "Effekt"
+    val itemType: String = "Effekt",
+    val card: ScryfallCard? = null
 ) {
-    val controllerLabel get() = if (controlledByActive) "AP" else "NAP"
+    fun controllerLabel(apShort: String, napShort: String) =
+        if (controlledByActive) apShort else napShort
 }
 
 data class GameState(
     val turnNumber: Int = 1,
     val activePlayerName: String = "Spieler 1",
     val nonActivePlayerName: String = "Spieler 2",
-    val currentStepIndex: Int = 1, // Start at UPKEEP
-    val priority: PriorityHolder = PriorityHolder.ACTIVE_PLAYER,
+    val currentStepIndex: Int = 0,
+    val priority: PriorityHolder = PriorityHolder.NONE,
     val stack: List<StackItem> = emptyList(),
     val lastPassedBy: PriorityHolder? = null,
-    val awaitingMandatoryAction: Boolean = false,
-    val statusMessage: String = "Runde 1 beginnt. AP erhält Priorität im Versorgungsschritt.",
-    val includeFirstStrike: Boolean = false
+    val awaitingMandatoryAction: Boolean = true,
+    val statusMessage: String = "Runde 1: Enttapp-Schritt.",
+    val includeFirstStrike: Boolean = false,
+    val language: Language = Language.GERMAN
 ) {
     val currentStep get() = ALL_STEPS[currentStepIndex]
 
-    fun activePlayerLabel() = activePlayerName
-    fun nonActivePlayerLabel() = nonActivePlayerName
-    fun priorityHolderName() = when (priority) {
+    fun priorityHolderName(nobody: String) = when (priority) {
         PriorityHolder.ACTIVE_PLAYER -> activePlayerName
         PriorityHolder.NON_ACTIVE_PLAYER -> nonActivePlayerName
-        PriorityHolder.NONE -> "Niemand"
+        PriorityHolder.NONE -> nobody
     }
 
-    // What can the current priority holder play?
     fun currentCastingOptions(): CastingOptions {
         if (priority == PriorityHolder.NONE) return CastingOptions.NONE
         val step = currentStep
         return when (priority) {
             PriorityHolder.ACTIVE_PLAYER -> {
-                // In main phase with empty stack: full sorcery speed
                 val isMainPhase = step.id == StepId.MAIN_PRE || step.id == StepId.MAIN_POST
                 if (isMainPhase && stack.isEmpty()) step.apCastingOptions
                 else step.apCastingOptions.copy(

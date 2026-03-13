@@ -51,6 +51,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
+    implementation(libs.coil.compose)
 
     // Compose BOM – keeps all versions in sync
     implementation(platform(libs.androidx.compose.bom))
